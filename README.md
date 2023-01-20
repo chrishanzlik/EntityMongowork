@@ -8,7 +8,7 @@
 
 Example:
 
-``` cshap
+``` csharp
 
 public class MyDbContext : MongoDbContext
 {
@@ -24,7 +24,7 @@ public async Task Main()
 	ctx.Persons.Insert(person1);
 	ctx.Persons.Insert(person2);
 
-	ctx.SaveChangesAsync();
+	await ctx.SaveChangesAsync();
 }
 
 ```
