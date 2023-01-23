@@ -8,7 +8,13 @@ using System.Threading.Tasks;
 
 namespace EntityMongowork
 {
-    public interface IMongoDbSet<T>
+    public interface IMongoDbSet
+    {
+        internal IReadOnlyCollection<object> ModifiedEntities { get; }
+        internal void ClearModifedEntities();
+    }
+
+    public interface IMongoDbSet<T> : IMongoDbSet where T : class
     {
         Task<T> GetByIdAsync(object id, CancellationToken cancellationToken = default);
         Task<IEnumerable<T>> GetAllAsync(CancellationToken cancellationToken = default);

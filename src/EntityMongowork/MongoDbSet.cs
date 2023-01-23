@@ -10,9 +10,13 @@ namespace EntityMongowork
         private readonly ICommandStore _commands;
         private readonly MongoCollectionSettings _collectionSettings;
         private readonly string _collectionName;
+        private readonly List<T> _modifiedEntities;
 
-        protected MongoDbSet(string collectionName, IMongoDatabase database, ICommandStore commandStore, MongoCollectionSettings collectionSettings)
+        IReadOnlyCollection<object> IMongoDbSet.ModifiedEntities => _modifiedEntities.ToList().AsReadOnly();
+
+        internal MongoDbSet(string collectionName, IMongoDatabase database, ICommandStore commandStore, MongoCollectionSettings collectionSettings)
         {
+            _modifiedEntities = new List<T>();
             _collectionSettings = collectionSettings;
             _collectionName = collectionName;
             _collection = database.GetCollection<T>(collectionName, collectionSettings);
@@ -65,7 +69,8 @@ namespace EntityMongowork
                 (IMongoDatabase db) =>
                     db.GetCollection<T>(_collectionName, _collectionSettings)
                         .ReplaceOneAsync(Builders<T>.Filter.Eq("_id", id), item, replaceOptions, cancellationToken));
-            this._commands.AddCommand(command);
+            _commands.AddCommand(command);
+            MarkAsModified(item);
         }
 
         /// <inheritdoc />
@@ -76,7 +81,8 @@ namespace EntityMongowork
                 (IMongoDatabase db) =>
                     db.GetCollection<T>(_collectionName, _collectionSettings)
                         .InsertOneAsync(item, insertOptions, cancellationToken));
-            this._commands.AddCommand(command);
+            _commands.AddCommand(command);
+            MarkAsModified(item);
         }
 
         /// <inheritdoc />
@@ -87,8 +93,23 @@ namespace EntityMongowork
                 (IMongoDatabase db) =>
                     db.GetCollection<T>(_collectionName, _collectionSettings)
                         .DeleteOneAsync(Builders<T>.Filter.Eq("_id", id), deleteOptions, cancellationToken));
-            this._commands.AddCommand(command);
+            _commands.AddCommand(command);
         }
 
+        private void MarkAsModified(T entity)
+        {
+            if (_modifiedEntities.Contains(entity))
+            {
+                return;
+            }
+
+            _modifiedEntities.Add(entity);
+        }
+
+        void IMongoDbSet.ClearModifedEntities()
+        {
+            this._modifiedEntities.Clear();
+
+        }
     }
 }

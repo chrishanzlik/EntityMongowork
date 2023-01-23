@@ -1,6 +1,5 @@
 ﻿using EntityMongowork.Commands;
 using MongoDB.Driver;
-using MongoDB.Driver.Core.Configuration;
 using System.Reflection;
 
 namespace EntityMongowork
@@ -11,36 +10,27 @@ namespace EntityMongowork
         private readonly IMongoDatabase _db;
         private readonly ICommandStore _commandStore;
         private readonly bool _useTransactions;
+        private readonly Dictionary<Type, IMongoDbSet> _dbSets;
 
         public MongoDbContext(string connectionString, string databaseName, bool useTransactions = false)
-        {
-            _client = new MongoClient(connectionString);
-            _db = _client.GetDatabase(databaseName);
-            _commandStore = new InMemoryCommandStore();
-            _useTransactions = useTransactions;
-
-            InitializeDbSets();
-        }
+            : this(() => new MongoClient(connectionString), databaseName, useTransactions) { }
 
         public MongoDbContext(IMongoClientProvider clientProvider, string databaseName, bool useTransactions = false)
-        {
-            _client = clientProvider.ProvideClient();
-            _db = _client.GetDatabase(databaseName);
-            _commandStore = new InMemoryCommandStore();
-            _useTransactions = useTransactions;
-
-            InitializeDbSets();
-        }
+            : this(clientProvider.ProvideClient, databaseName, useTransactions) { }
 
         public MongoDbContext(Func<MongoClient> clientProvider, string databaseName, bool useTransactions = false)
         {
+            _dbSets = new Dictionary<Type, IMongoDbSet>();
             _client = clientProvider();
             _db = _client.GetDatabase(databaseName);
             _commandStore = new InMemoryCommandStore();
             _useTransactions = useTransactions;
 
-            InitializeDbSets();
+            var props = FindDbSetProperties();
+            InitializeDbSets(props);
         }
+
+        protected IReadOnlyCollection<object> ModifiedEntities => _dbSets.Values.SelectMany(x => x.ModifiedEntities).ToList().AsReadOnly();
 
         /// <inheritdoc />
         public virtual async Task SaveChangesAsync()
@@ -57,16 +47,34 @@ namespace EntityMongowork
             }
         }
 
-        private void InitializeDbSets()
+
+        protected virtual IReadOnlyCollection<PropertyInfo> FindDbSetProperties()
         {
-            this.GetType()
+            return this.GetType()
                 .GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(m =>
                     m.PropertyType.IsGenericType &&
                     m.PropertyType.GetGenericTypeDefinition() == typeof(MongoDbSet<>)
                     && (m.GetGetMethod()?.IsVirtual ?? false))
                 .ToList()
-                .ForEach(prop => prop.SetValue(this, CreateDbSet(prop, _db, _commandStore)));
+                .AsReadOnly();
+        }
+
+        protected void InitializeDbSets(IReadOnlyCollection<PropertyInfo> propertyInfos)
+        {
+            foreach(var propertyInfo in propertyInfos)
+            {
+                var currentValue = propertyInfo.GetValue(this);
+
+                if (currentValue is null)
+                {
+                    if (CreateDbSet(propertyInfo, _db, _commandStore) is IMongoDbSet set)
+                    {
+                        _dbSets.Add(propertyInfo.PropertyType, set);
+                        propertyInfo.SetValue(this, set);
+                    }
+                }
+            }
         }
 
         private static object? CreateDbSet(PropertyInfo prop, IMongoDatabase dbRef, ICommandStore storeRef)
@@ -84,9 +92,13 @@ namespace EntityMongowork
         {
             while (_commandStore.HasNext)
             {
-                var lambda = _commandStore.GetNext()!.Expression.Compile() as Func<IMongoDatabase, Task>;
-                var task = lambda.Invoke(_db);
-                await task;
+                var lambda = _commandStore.GetNext()!.Expression.Compile();
+                await lambda.Invoke(_db);
+            }
+
+            foreach(var dbSet in _dbSets.Values)
+            {
+                dbSet.ClearModifedEntities();
             }
         }
     }
